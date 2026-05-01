@@ -1,6 +1,6 @@
 import "./style.css";
 
-const PAPERS_JSON_URL = "https://hf-papers-ja.yashikota.com/data/papers.json";
+const PAPERS_JSON_URL = "https://a-kaibu.github.io/hf-papers-ja/data/papers.json";
 
 type Paper = {
   id: string;
