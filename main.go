@@ -23,6 +23,8 @@ const (
 	feedURL          = "https://azuresilent.github.io/hf-paper-rss/feed.xml"
 	defaultLLMBase   = "http://127.0.0.1:8080"
 	outputPath       = "public/data/papers.json"
+	rssOutputPath    = "public/data/rss.xml"
+	siteURL          = "https://hf-papers-ja.yashikota.com"
 	defaultSchema    = "schemas/paper_explanation.schema.json"
 	requestTimeout   = 5 * time.Minute
 	feedHTTPTimeout  = 30 * time.Second
@@ -58,6 +60,29 @@ type rssItem struct {
 	Description string `xml:"description"`
 	PubDate     string `xml:"pubDate"`
 	GUID        string `xml:"guid"`
+}
+
+type outputRSS struct {
+	XMLName xml.Name         `xml:"rss"`
+	Version string           `xml:"version,attr"`
+	Channel outputRSSChannel `xml:"channel"`
+}
+
+type outputRSSChannel struct {
+	Title       string          `xml:"title"`
+	Link        string          `xml:"link"`
+	Description string          `xml:"description"`
+	Language    string          `xml:"language"`
+	PubDate     string          `xml:"pubDate"`
+	Items       []outputRSSItem `xml:"item"`
+}
+
+type outputRSSItem struct {
+	Title       string `xml:"title"`
+	Link        string `xml:"link"`
+	Description string `xml:"description"`
+	GUID        string `xml:"guid"`
+	PubDate     string `xml:"pubDate"`
 }
 
 type papersOutput struct {
@@ -185,6 +210,11 @@ func run(ctx context.Context) error {
 		return fmt.Errorf("write output: %w", err)
 	}
 	log.Printf("wrote %s with %d papers", outputPath, len(papers))
+
+	if err := writeRSS(rssOutputPath, papers, out.GeneratedAt); err != nil {
+		return fmt.Errorf("write RSS: %w", err)
+	}
+	log.Printf("wrote %s with %d papers", rssOutputPath, len(papers))
 	return nil
 }
 
@@ -493,6 +523,95 @@ func writeJSON(filename string, data any) error {
 	encoder.SetEscapeHTML(false)
 	if err := encoder.Encode(data); err != nil {
 		return fmt.Errorf("encode json: %w", err)
+	}
+	return nil
+}
+
+func writeRSS(filename string, papers []paper, generatedAt string) error {
+	if err := os.MkdirAll(filepath.Dir(filename), 0o755); err != nil {
+		return fmt.Errorf("create directory: %w", err)
+	}
+
+	generatedTime, err := time.Parse(time.RFC3339, generatedAt)
+	if err != nil {
+		generatedTime = time.Now().UTC()
+	}
+	pubDate := generatedTime.Format(time.RFC1123Z)
+
+	items := make([]outputRSSItem, 0, len(papers))
+	for _, p := range papers {
+		itemPubDate := pubDate
+		if parsed, err := time.Parse(time.RFC3339, p.PublishedAt); err == nil {
+			itemPubDate = parsed.Format(time.RFC1123Z)
+		}
+
+		description := strings.Builder{}
+		if p.Japanese.Summary != "" {
+			description.WriteString("<p>")
+			description.WriteString(html.EscapeString(p.Japanese.Summary))
+			description.WriteString("</p>")
+		}
+		if p.Japanese.Explanation != "" {
+			description.WriteString("<p>")
+			description.WriteString(html.EscapeString(p.Japanese.Explanation))
+			description.WriteString("</p>")
+		}
+		description.WriteString("<p>")
+		description.WriteString(`<a href="`)
+		description.WriteString(html.EscapeString(p.URL))
+		description.WriteString(`">Hugging Face</a>`)
+		if p.ArxivURL != "" {
+			description.WriteString(` | <a href="`)
+			description.WriteString(html.EscapeString(p.ArxivURL))
+			description.WriteString(`">arXiv</a>`)
+		}
+		if p.AlphaXivURL != "" {
+			description.WriteString(` | <a href="`)
+			description.WriteString(html.EscapeString(p.AlphaXivURL))
+			description.WriteString(`">alphaXiv</a>`)
+		}
+		if p.PDFURL != "" {
+			description.WriteString(` | <a href="`)
+			description.WriteString(html.EscapeString(p.PDFURL))
+			description.WriteString(`">PDF</a>`)
+		}
+		description.WriteString("</p>")
+
+		items = append(items, outputRSSItem{
+			Title:       p.Japanese.Title,
+			Link:        p.URL,
+			Description: description.String(),
+			GUID:        p.GUID,
+			PubDate:     itemPubDate,
+		})
+	}
+
+	rss := outputRSS{
+		Version: "2.0",
+		Channel: outputRSSChannel{
+			Title:       "Hugging Face Papers 日本語解説",
+			Link:        siteURL,
+			Description: "Hugging Face Papersの論文を日本語で解説",
+			Language:    "ja",
+			PubDate:     pubDate,
+			Items:       items,
+		},
+	}
+
+	file, err := os.Create(filename)
+	if err != nil {
+		return fmt.Errorf("create file: %w", err)
+	}
+	defer file.Close()
+
+	if _, err := file.WriteString(xml.Header); err != nil {
+		return fmt.Errorf("write xml header: %w", err)
+	}
+
+	encoder := xml.NewEncoder(file)
+	encoder.Indent("", "  ")
+	if err := encoder.Encode(rss); err != nil {
+		return fmt.Errorf("encode xml: %w", err)
 	}
 	return nil
 }
