@@ -1,0 +1,28 @@
+{
+  "name": "hf-papers-ja",
+  "preview_urls": true,
+  "compatibility_date": "2026-04-28",
+  "deploy": {
+    "production_branch": "main"
+  },
+  "compatibility_flags": ["nodejs_compat"],
+  "routes": [{ "pattern": "hf-papers-ja.yashikota.com", "custom_domain": true }],
+  "assets": {
+    "directory": "./dist"
+  },
+  "observability": {
+    "enabled": false,
+    "head_sampling_rate": 1,
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 1,
+      "persist": true,
+      "invocation_logs": true
+    },
+    "traces": {
+      "enabled": false,
+      "persist": true,
+      "head_sampling_rate": 1
+    }
+  }
+}
