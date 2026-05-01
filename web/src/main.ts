@@ -151,9 +151,12 @@ const getAllTags = (papers: Paper[]): string[] => {
     .map(([tag]) => tag);
 };
 
+const normalizeSearchText = (value: string): string => value.normalize("NFKC").toLowerCase();
+
 const matchesQuery = (paper: Paper, query: string): boolean => {
-  const normalizedQuery = query.trim().toLowerCase();
-  if (!normalizedQuery) {
+  const terms = normalizeSearchText(query).trim().split(/\s+/).filter(Boolean);
+
+  if (terms.length === 0) {
     return true;
   }
 
@@ -164,14 +167,13 @@ const matchesQuery = (paper: Paper, query: string): boolean => {
     paper.source.title,
     paper.source.summary ?? "",
     paper.source.explanation ?? "",
-    paper.institution ?? "",
     ...paper.authors,
-    ...paper.tags,
   ]
     .join(" ")
+    .normalize("NFKC")
     .toLowerCase();
 
-  return haystack.includes(normalizedQuery);
+  return terms.every((term) => haystack.includes(term));
 };
 
 const getVisiblePapers = (): Paper[] => {
@@ -183,12 +185,12 @@ const getVisiblePapers = (): Paper[] => {
   });
 };
 
-const renderLink = (href: string | undefined, label: string, variant = ""): string => {
+const renderMetaLink = (href: string | undefined, label: string): string => {
   if (!href) {
     return "";
   }
 
-  return `<a class="paper-link ${variant}" href="${escapeHtml(href)}" target="_blank" rel="noreferrer">${label}</a>`;
+  return `<a class="paper-card__meta-link" href="${escapeHtml(href)}" target="_blank" rel="noreferrer">${label}</a>`;
 };
 
 const renderPaper = (paper: Paper): string => {
@@ -198,51 +200,98 @@ const renderPaper = (paper: Paper): string => {
   const sourceSummary = paper.source.summary ?? "";
   const sourceExplanation = paper.source.explanation ?? "";
   const tags = paper.tags.map((tag) => `<span class="tag">${escapeHtml(tag)}</span>`).join("");
+  const detailsId = `paper-details-${paper.id.replaceAll(/[^a-zA-Z0-9_-]/g, "-")}`;
 
   return `
-    <article class="paper-card">
-      <div class="paper-card__meta">
-        <time datetime="${escapeHtml(paper.publishedAt)}">${escapeHtml(formatDate(paper.publishedAt))}</time>
-        ${paper.institution ? `<span>${escapeHtml(paper.institution)}</span>` : ""}
+    <article class="paper-card" tabindex="0" aria-expanded="false" aria-controls="${escapeHtml(detailsId)}">
+      <div class="paper-card__top">
+        <div class="paper-card__meta">
+          <time datetime="${escapeHtml(paper.publishedAt)}">${escapeHtml(formatDate(paper.publishedAt))}</time>
+          ${renderMetaLink(paper.url, "Paper")}
+          ${renderMetaLink(paper.arxivUrl, "arXiv")}
+          ${renderMetaLink(paper.alphaxivUrl, "alphaXiv")}
+          ${paper.institution ? `<span>${escapeHtml(paper.institution)}</span>` : ""}
+        </div>
+        <span class="paper-card__toggle-cue" aria-hidden="true"></span>
       </div>
       <h2>${escapeHtml(paper.japanese.title)}</h2>
+      <p class="paper-card__authors">${escapeHtml(authors)}</p>
       ${summary ? `<p class="paper-card__summary">${escapeHtml(summary)}</p>` : ""}
       ${explanation ? `<p class="paper-card__explanation">${escapeHtml(explanation)}</p>` : ""}
       <div class="paper-card__tags">${tags}</div>
-      <dl class="paper-card__details">
-        <div>
-          <dt>Original</dt>
-          <dd>${escapeHtml(paper.source.title)}</dd>
-        </div>
-        ${
-          sourceSummary
-            ? `<div>
-                <dt>Summary</dt>
-                <dd>${escapeHtml(sourceSummary)}</dd>
-              </div>`
-            : ""
-        }
-        ${
-          sourceExplanation
-            ? `<div>
-                <dt>Abstract</dt>
-                <dd>${escapeHtml(sourceExplanation)}</dd>
-              </div>`
-            : ""
-        }
-        <div>
-          <dt>Authors</dt>
-          <dd>${escapeHtml(authors)}</dd>
-        </div>
-      </dl>
-      <div class="paper-card__links">
-        ${renderLink(paper.url, "Paper", "paper-link--primary")}
-        ${renderLink(paper.arxivUrl, "arXiv")}
-        ${renderLink(paper.alphaxivUrl, "alphaXiv")}
-        ${renderLink(paper.pdfUrl, "PDF")}
-      </div>
+      <section id="${escapeHtml(detailsId)}" class="paper-card__toggle" hidden>
+        <dl class="paper-card__details">
+          <div>
+            <dt>Title</dt>
+            <dd>${escapeHtml(paper.source.title)}</dd>
+          </div>
+          ${
+            sourceSummary
+              ? `<div>
+                  <dt>Summary</dt>
+                  <dd>${escapeHtml(sourceSummary)}</dd>
+                </div>`
+              : ""
+          }
+          ${
+            sourceExplanation
+              ? `<div>
+                  <dt>Abstract</dt>
+                  <dd>${escapeHtml(sourceExplanation)}</dd>
+                </div>`
+              : ""
+          }
+          <div>
+            <dt>Authors</dt>
+            <dd>${escapeHtml(authors)}</dd>
+          </div>
+        </dl>
+      </section>
     </article>
   `;
+};
+
+const setPaperCardExpanded = (card: HTMLElement, expanded: boolean): void => {
+  const detailsId = card.getAttribute("aria-controls");
+  const details = detailsId ? document.getElementById(detailsId) : null;
+
+  card.setAttribute("aria-expanded", String(expanded));
+  if (details) {
+    details.hidden = !expanded;
+  }
+};
+
+const togglePaperCard = (card: HTMLElement): void => {
+  setPaperCardExpanded(card, card.getAttribute("aria-expanded") !== "true");
+};
+
+const renderResults = (): void => {
+  if (!state.data) {
+    return;
+  }
+
+  const visiblePapers = getVisiblePapers();
+  const selectedTagLabel = state.selectedTag ? `タグ: ${state.selectedTag}` : "すべて";
+  const paperCountLabel = `${visiblePapers.length} / ${state.data.papers.length} 件`;
+  const resultBar = document.querySelector<HTMLElement>(".result-bar");
+  const paperList = document.querySelector<HTMLElement>(".paper-list");
+
+  if (resultBar) {
+    resultBar.innerHTML = `
+      <span>${escapeHtml(paperCountLabel)}</span>
+      <span>${escapeHtml(selectedTagLabel)}</span>
+    `;
+  }
+
+  if (paperList) {
+    paperList.innerHTML =
+      visiblePapers.length > 0
+        ? visiblePapers.map(renderPaper).join("")
+        : `<div class="empty-state">
+            <h2>条件に一致する論文はありません</h2>
+            <p>検索語句やタグの選択を変更してください。</p>
+          </div>`;
+  }
 };
 
 const renderLoading = (): void => {
@@ -282,21 +331,18 @@ const renderApp = (): void => {
   }
 
   const allTags = getAllTags(state.data.papers);
-  const visiblePapers = getVisiblePapers();
-  const selectedTagLabel = state.selectedTag ? `タグ: ${state.selectedTag}` : "すべて";
-  const paperCountLabel = `${visiblePapers.length} / ${state.data.papers.length} 件`;
 
   app.innerHTML = `
     <main class="app-shell">
       <header class="site-header">
         <div>
           <p class="eyebrow">Hugging Face Daily Papers</p>
-          <h1>HF Papers JA</h1>
+          <h1>Hugging Face Daily Papers 日本語まとめ</h1>
           <p class="lead">Hugging Face の論文情報を、日本語の要約と解説で確認できます。</p>
         </div>
         <div class="source-panel">
           <span>更新: ${escapeHtml(formatGeneratedAt(state.data.generatedAt))}</span>
-          <a href="${escapeHtml(state.data.sourceFeedUrl)}" target="_blank" rel="noreferrer">RSS</a>
+          <a href="${PAPERS_JSON_URL.replace("papers.json", "rss.xml")}" target="_blank" rel="noreferrer">RSS</a>
           <a href="${PAPERS_JSON_URL}" target="_blank" rel="noreferrer">JSON</a>
         </div>
       </header>
@@ -304,7 +350,7 @@ const renderApp = (): void => {
       <section class="controls" aria-label="検索と絞り込み">
         <label class="search-field">
           <span>検索</span>
-          <input id="search-input" type="search" value="${escapeHtml(state.query)}" placeholder="タイトル、要約、著者、タグで検索" autocomplete="off" />
+          <input id="search-input" type="search" value="${escapeHtml(state.query)}" placeholder="タイトル、abstract、著者で検索" autocomplete="off" />
         </label>
         <div class="tag-filter" aria-label="タグ絞り込み">
           <button class="tag-button ${state.selectedTag === null ? "is-active" : ""}" type="button" data-tag="">すべて</button>
@@ -317,24 +363,13 @@ const renderApp = (): void => {
         </div>
       </section>
 
-      <section class="result-bar" aria-live="polite">
-        <span>${escapeHtml(paperCountLabel)}</span>
-        <span>${escapeHtml(selectedTagLabel)}</span>
-      </section>
+      <section class="result-bar" aria-live="polite"></section>
 
-      <section class="paper-list" aria-label="論文一覧">
-        ${
-          visiblePapers.length > 0
-            ? visiblePapers.map(renderPaper).join("")
-            : `<div class="empty-state">
-                <h2>条件に一致する論文はありません</h2>
-                <p>検索語句やタグの選択を変更してください。</p>
-              </div>`
-        }
-      </section>
+      <section class="paper-list" aria-label="論文一覧"></section>
     </main>
   `;
 
+  renderResults();
   bindEvents();
 };
 
@@ -342,8 +377,7 @@ const bindEvents = (): void => {
   const searchInput = document.querySelector<HTMLInputElement>("#search-input");
   searchInput?.addEventListener("input", (event) => {
     state.query = (event.target as HTMLInputElement).value;
-    renderApp();
-    document.querySelector<HTMLInputElement>("#search-input")?.focus();
+    renderResults();
   });
 
   for (const button of document.querySelectorAll<HTMLButtonElement>(".tag-button[data-tag]")) {
@@ -353,6 +387,32 @@ const bindEvents = (): void => {
       renderApp();
     });
   }
+
+  const paperList = document.querySelector<HTMLElement>(".paper-list");
+  paperList?.addEventListener("click", (event) => {
+    const target = event.target as HTMLElement;
+    if (target.closest("a, button, input, select, textarea")) {
+      return;
+    }
+
+    const card = target.closest<HTMLElement>(".paper-card");
+    if (card) {
+      togglePaperCard(card);
+    }
+  });
+
+  paperList?.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") {
+      return;
+    }
+
+    const card =
+      event.target instanceof HTMLElement ? event.target.closest<HTMLElement>(".paper-card") : null;
+    if (card && event.target === card) {
+      event.preventDefault();
+      togglePaperCard(card);
+    }
+  });
 };
 
 const loadPapers = async (): Promise<void> => {
